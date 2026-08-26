@@ -100,6 +100,16 @@ Validate the plugin before publishing:
 omarchy plugin validate .
 ```
 
+## Security and dependencies
+
+This plugin runs unsandboxed inside `omarchy-shell` when enabled.
+
+- Network access: none.
+- External commands: `mkdir -p`, used only to create the local state directory.
+- Local data: reads and writes `~/.local/state/omarchy/countdown.json`.
+- Elevated privileges and background services: none.
+- Dependencies: Omarchy Quattro and Quickshell; no third-party runtime dependencies.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
