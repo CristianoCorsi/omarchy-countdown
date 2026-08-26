@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "cristianocorsi.countdown",
+  "name": "Countdown",
+  "version": "1.0.0",
+  "author": "Cristiano Corsi",
+  "license": "MIT",
+  "description": "Countdowns in the bar, with visible progress and a panel to manage them.",
+  "homepage": "https://github.com/CristianoCorsi/omarchy-countdown",
+  "repository": "https://github.com/CristianoCorsi/omarchy-countdown",
+  "keywords": ["countdown", "timer", "deadline", "date", "progress"],
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Countdown",
+    "description": "Shows how much time is left until a deadline. Scroll to cycle, click to manage.",
+    "category": "Time",
+    "aliases": ["countdown", "expiry", "deadline", "timer"],
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "format": "days",
+      "maxLabel": 16,
+      "showProgress": true,
+      "alertDays": 3
+    },
+    "schema": [
+      {
+        "key": "format",
+        "type": "string",
+        "label": "Format",
+        "options": ["days", "percentage", "auto"],
+        "defaultValue": "days"
+      },
+      {
+        "key": "maxLabel",
+        "type": "integer",
+        "label": "Maximum label length",
+        "min": 4,
+        "max": 40,
+        "step": 1,
+        "defaultValue": 16
+      },
+      {
+        "key": "showProgress",
+        "type": "boolean",
+        "label": "Show progress bar",
+        "defaultValue": true
+      },
+      {
+        "key": "alertDays",
+        "type": "integer",
+        "label": "Highlight when less than (days) remain",
+        "min": 0,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 3
+      }
+    ]
+  }
+}
