@@ -22,16 +22,11 @@ a panel for managing multiple countdowns.
   <img src="screenshots/configuration.png" alt="Countdown management panel with example entries" width="399">
 </p>
 
-The screenshots use fictional example deadlines. No personal countdown data is
-included in this repository.
-
 ## Installation
 
 ```bash
 omarchy plugin add https://github.com/CristianoCorsi/omarchy-countdown.git --enable
 ```
-
-The public plugin ID is `cristianocorsi.countdown`.
 
 ## Usage
 
