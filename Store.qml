@@ -1,10 +1,9 @@
 // State of the countdown on disk.
 //
-// The file is watched (watchChanges) and re-read on every modification: the bar
-// exists once per monitor, so each screen has its own instance of the
-// widget and its Store. By routing every write through the file, a
-// change made by one panel reaches the other screens on its own, without
-// having to notify them manually.
+// FileView is deliberately only a content-free change watcher. Every read and
+// write crosses state_io.py, which opens the state file without following the
+// final path, never blocks on special files, validates the same descriptor,
+// and bounds the payload before it reaches JSON.parse() in this shell process.
 
 import QtQuick
 import Quickshell
@@ -16,11 +15,26 @@ Item {
   visible: false
 
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy"
-  property string path: stateDir + "/countdown.json"
+  readonly property string path: stateDir + "/countdown.json"
+  readonly property string helperPath: {
+    var url = String(Qt.resolvedUrl("state_io.py"))
+    return decodeURIComponent(url.replace(/^file:\/\//, ""))
+  }
 
   property var data: Model.normalize(null)
   property bool loaded: false
-  property bool dirReady: false
+  property bool waitingForSafeFile: true
+  property string lastError: ""
+  property string readerResponse: ""
+  property string readerError: ""
+  property bool readQueued: false
+  property int writeSerial: 0
+  property int activeReadSerial: 0
+  property string pendingWrite: ""
+  property string activeWrite: ""
+  property bool writeQueued: false
+  property string writerResponse: ""
+  property string writerError: ""
 
   readonly property var entries: data && data.countdowns ? data.countdowns : []
   readonly property int count: entries.length
@@ -35,30 +49,74 @@ Item {
   function apply(raw) {
     data = Model.normalize(raw)
     loaded = true
+    lastError = ""
   }
 
-  function parse(text) {
+  function responseObject(line) {
+    var text = String(line || "")
+    // The helper's output is already bounded. Keep an independent ceiling at
+    // the process boundary so no unexpected helper output reaches JSON.parse().
+    if (text.length === 0 || text.length > Model.MAX_STATE_BYTES * 2)
+      return { status: "error", error: "invalid state helper response size" }
     try {
-      apply(JSON.parse(String(text)))
-    } catch (e) {
-      // A corrupt file must not make the widget disappear: it restarts from a
-      // valid empty state and the first write puts it right.
-      console.warn("cristianocorsi.countdown: unreadable state, restarting from empty:", e)
-      apply(null)
+      var response = JSON.parse(text)
+      if (!response || typeof response !== "object") throw new Error("not an object")
+      return response
+    } catch (error) {
+      return { status: "error", error: "invalid state helper response" }
     }
   }
 
-  // Every mutation passes through here: it normalizes, writes, and lets the
-  // watcher sync `data` back — so that what is in memory is always what
-  // is on disk.
+  function acceptReadResponse(line) {
+    var response = responseObject(line)
+    if (response.status === "ok") {
+      apply(response.data)
+      waitingForSafeFile = false
+      return
+    }
+    if (response.status === "missing") {
+      apply(null)
+      waitingForSafeFile = true
+      return
+    }
+
+    loaded = true
+    waitingForSafeFile = true
+    lastError = String(response.error || readerError || "secure state read failed")
+    console.warn("cristianocorsi.countdown: state rejected:", lastError)
+  }
+
+  function requestRead() {
+    if (reader.running) {
+      readQueued = true
+      return
+    }
+    activeReadSerial = writeSerial
+    reader.running = true
+  }
+
+  function startWrite() {
+    if (writer.running || pendingWrite === "") return
+    activeWrite = pendingWrite
+    writeQueued = false
+    writer.running = true
+  }
+
+  // Every mutation is normalized before it enters the UI or the writer. Writes
+  // are serialized; a newer mutation replaces any queued older payload.
   function commit(next) {
-    if (!dirReady) {
-      saveFailed("state directory not ready")
+    var payload = Model.normalize(next)
+    var encoded = JSON.stringify(payload)
+    if (encoded.length > Model.MAX_STATE_BYTES) {
+      saveFailed("state payload is too large")
       return false
     }
-    var payload = Model.normalize(next)
+
     data = payload
-    file.setText(JSON.stringify(payload, null, 2) + "\n")
+    pendingWrite = encoded
+    writeSerial++
+    if (writer.running) writeQueued = true
+    else startWrite()
     return true
   }
 
@@ -78,10 +136,12 @@ Item {
   }
 
   function addEntry(entry) {
+    if (count >= Model.MAX_COUNTDOWNS) {
+      saveFailed("countdown limit reached")
+      return false
+    }
     var next = clone()
     next.countdowns.push(entry)
-    // Jump immediately to the newly created entry: it is the one being
-    // viewed, and it is the only way to see it without scrolling.
     next.state.current_index = next.countdowns.length - 1
     return commit(next)
   }
@@ -111,28 +171,70 @@ Item {
     return commit(next)
   }
 
-  // FileView cannot write to a directory that does not exist, and
-  // ~/.local/state/omarchy is not there on a fresh installation.
   Process {
-    id: ensureDir
-    running: true
-    command: ["mkdir", "-p", root.stateDir]
+    id: reader
+    command: ["/usr/bin/python3", root.helperPath, "read", root.path]
+    stdout: SplitParser { onRead: function(line) { root.readerResponse = line } }
+    stderr: SplitParser { onRead: function(line) { root.readerError = line } }
+    onStarted: {
+      root.readerResponse = ""
+      root.readerError = ""
+    }
     onExited: function(code) {
-      root.dirReady = code === 0
-      if (root.dirReady) file.reload()
-      else root.saveFailed("unable to create " + root.stateDir)
+      // Ignore a read that started before a local write. The writer's exact
+      // post-rename read will become authoritative instead.
+      if (root.activeReadSerial === root.writeSerial && !writer.running && !root.writeQueued)
+        root.acceptReadResponse(root.readerResponse)
+      if (root.readQueued) {
+        root.readQueued = false
+        Qt.callLater(root.requestRead)
+      }
     }
   }
 
-  FileView {
-    id: file
-    path: root.path
-    watchChanges: true
-    atomicWrites: true
-    printErrors: false
-    onLoaded: root.parse(text())
-    // File absent on first startup: empty state, and the first addition creates it.
-    onLoadFailed: root.apply(null)
-    onFileChanged: reload()
+  Process {
+    id: writer
+    command: ["/usr/bin/python3", root.helperPath, "write", root.path]
+    stdinEnabled: true
+    stdout: SplitParser { onRead: function(line) { root.writerResponse = line } }
+    stderr: SplitParser { onRead: function(line) { root.writerError = line } }
+    onStarted: {
+      root.writerResponse = ""
+      root.writerError = ""
+      write(root.activeWrite + "\n")
+    }
+    onExited: function(code) {
+      var response = root.responseObject(root.writerResponse)
+      if (code !== 0 || response.status !== "ok") {
+        root.lastError = String(response.error || root.writerError || "secure state write failed")
+        root.saveFailed(root.lastError)
+        console.warn("cristianocorsi.countdown: save failed:", root.lastError)
+      }
+
+      if (root.writeQueued) Qt.callLater(root.startWrite)
+      else Qt.callLater(root.requestRead)
+    }
   }
+
+  // QFileSystemWatcher remains useful for prompt cross-monitor updates, but it
+  // must never load the watched object. Missing or rejected files are retried
+  // by the timer until a safe regular file appears.
+  FileView {
+    id: stateWatcher
+    path: root.path
+    preload: false
+    blockAllReads: true
+    watchChanges: true
+    printErrors: false
+    onFileChanged: root.requestRead()
+  }
+
+  Timer {
+    interval: 2000
+    repeat: true
+    running: root.waitingForSafeFile
+    onTriggered: root.requestRead()
+  }
+
+  Component.onCompleted: requestRead()
 }

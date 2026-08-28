@@ -26,7 +26,8 @@ Panel {
   // UI: the shell does not merge it into settings at runtime. The default
   // that matters is the fallback below, which must be kept aligned with the manifest.
   readonly property string displayFormat: String(setting("format", "days"))
-  readonly property int maxLabel: Math.max(4, Number(setting("maxLabel", 16)))
+  readonly property int maxLabel: Math.min(Model.MAX_LABEL_LENGTH,
+                                            Math.max(4, Number(setting("maxLabel", 16))))
   readonly property bool showProgress: setting("showProgress", true) === true
   readonly property int alertDays: Math.max(0, Number(setting("alertDays", 3)))
 
@@ -100,6 +101,10 @@ Panel {
       formError = problem
       return
     }
+    if (editIndex === -2 && store.count >= Model.MAX_COUNTDOWNS) {
+      formError = "Maximum of " + Model.MAX_COUNTDOWNS + " countdowns reached"
+      return
+    }
 
     // Dates are rewritten in canonical zero-padded form: the file accepts
     // "2026-10-3" for compatibility with old data, but does not produce it.
@@ -120,7 +125,10 @@ Panel {
 
   onOpenedChanged: if (!opened) { closeForm(); confirmDeleteIndex = -1 }
 
-  Store { id: store }
+  Store {
+    id: store
+    onSaveFailed: function(reason) { root.formError = String(reason || "Save failed") }
+  }
 
   // Minute precision: a countdown does not change faster than this,
   // even in the "auto" format which counts minutes in the last hour.
@@ -148,16 +156,22 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.barLabel
+    // WidgetButton's internal label uses Text.AutoText. Escape plugin data at
+    // this host boundary so a countdown label cannot become markup.
+    text: Model.escapeMarkup(root.barLabel)
     active: root.urgent
     tooltipText: {
       if (store.count === 0) return "No countdown — click to add one"
       var lines = []
-      for (var i = 0; i < store.entries.length; i++) {
+      var shown = Math.min(store.entries.length, 12)
+      for (var i = 0; i < shown; i++) {
         var d = Model.describe(store.entries[i], root.nowMs)
         lines.push((i === store.currentIndex ? "▸ " : "  ") + d.label + "  " + d.end + "  " + d.remaining)
       }
-      return lines.join("\n")
+      if (store.entries.length > shown) lines.push("… and " + (store.entries.length - shown) + " more")
+      // The shared bar tooltip also uses Text.AutoText and is outside this
+      // plugin, so sanitize the complete value before handing it to the bar.
+      return Model.escapeMarkup(lines.join("\n"))
     }
 
     onPressed: function(mouseButton) {
@@ -226,6 +240,7 @@ Panel {
           width: parent.width
           visible: store.count === 0 && !root.formOpen
           text: "No countdown configured."
+          textFormat: Text.PlainText
           color: root.barForeground
           opacity: 0.6
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -267,6 +282,7 @@ Panel {
                   width: parent.width - actions.width - remainingText.width - Style.space(16)
                   elide: Text.ElideRight
                   text: (row.isCurrent ? "▸ " : "") + row.info.label
+                  textFormat: Text.PlainText
                   color: root.barForeground
                   opacity: row.isCurrent ? 1 : 0.75
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -279,6 +295,7 @@ Panel {
                   anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
                   text: row.info.remaining
+                  textFormat: Text.PlainText
                   color: row.info.status === "active" ? root.barForeground
                                                       : (root.bar ? root.bar.urgent : Color.urgent)
                   opacity: row.info.status === "active" ? 0.8 : 1
@@ -333,6 +350,7 @@ Panel {
                   Text {
                     anchors.verticalCenter: parent.verticalCenter
                     text: "Delete?"
+                    textFormat: Text.PlainText
                     color: root.bar ? root.bar.urgent : Color.urgent
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.bodySmall
@@ -359,6 +377,7 @@ Panel {
                   id: dateText
                   anchors.left: parent.left
                   text: row.info.end + (row.info.format === "days" ? "" : "  ·  " + row.info.format)
+                  textFormat: Text.PlainText
                   color: root.barForeground
                   opacity: 0.5
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -407,6 +426,7 @@ Panel {
 
           Text {
             text: root.editIndex === -2 ? "New countdown" : "Edit countdown"
+            textFormat: Text.PlainText
             color: root.barForeground
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
@@ -415,6 +435,7 @@ Panel {
           TextField {
             width: parent.width
             placeholderText: "Label"
+            maximumLength: Model.MAX_LABEL_LENGTH
             text: root.draftLabel
             onTextChanged: root.draftLabel = text
             onAccepted: root.submitForm()
@@ -427,6 +448,7 @@ Panel {
             TextField {
               width: (parent.width - Style.space(6)) / 2
               placeholderText: "Start (YYYY-MM-DD)"
+              maximumLength: Model.MAX_DATE_LENGTH
               text: root.draftStart
               onTextChanged: root.draftStart = text
               onAccepted: root.submitForm()
@@ -435,6 +457,7 @@ Panel {
             TextField {
               width: (parent.width - Style.space(6)) / 2
               placeholderText: "End (YYYY-MM-DD)"
+              maximumLength: Model.MAX_DATE_LENGTH
               text: root.draftEnd
               onTextChanged: root.draftEnd = text
               onAccepted: root.submitForm()
@@ -458,6 +481,7 @@ Panel {
             width: parent.width
             visible: root.formError !== ""
             text: root.formError
+            textFormat: Text.PlainText
             wrapMode: Text.WordWrap
             color: root.bar ? root.bar.urgent : Color.urgent
             font.family: root.bar ? root.bar.fontFamily : Style.font.family

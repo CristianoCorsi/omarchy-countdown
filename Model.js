@@ -4,6 +4,33 @@
 .pragma library
 
 var MS_DAY = 86400000
+var MAX_STATE_BYTES = 65536
+var MAX_COUNTDOWNS = 64
+var MAX_LABEL_LENGTH = 128
+var MAX_DATE_LENGTH = 10
+var MAX_FORMAT_LENGTH = 16
+
+function boundedString(value, limit) {
+  var text = String(value || "")
+  // Labels are single-line UI data. Drop C0 controls even if a caller bypasses
+  // the stricter state helper; this keeps rows and tooltips structurally bound.
+  text = text.replace(/[\u0000-\u001f\u007f]/g, "")
+  return text.substring(0, limit)
+}
+
+function normalizedFormat(value) {
+  var format = boundedString(value || "days", MAX_FORMAT_LENGTH)
+  return ["days", "percentage", "auto"].indexOf(format) !== -1 ? format : "days"
+}
+
+// WidgetButton and the shared bar tooltip use Text.AutoText internally, so
+// plugin-controlled strings must be escaped before they cross that boundary.
+function escapeMarkup(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+}
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -17,7 +44,9 @@ function isObject(value) {
 // non-zero-padded formats ("2026-10-3") which `date -d` accepted and which must
 // continue to be accepted.
 function parseDate(value) {
-  var parts = String(value || "").trim().split("-")
+  var input = String(value || "").trim()
+  if (input.length > MAX_DATE_LENGTH) return null
+  var parts = input.split("-")
   if (parts.length !== 3) return null
 
   var y = parseInt(parts[0], 10)
@@ -112,8 +141,9 @@ function formatRemaining(entry, nowMs, format) {
 }
 
 function shortLabel(label, max) {
-  var text = String(label || "")
+  var text = boundedString(label, MAX_LABEL_LENGTH)
   var limit = Number(max) > 0 ? Number(max) : 16
+  limit = Math.min(MAX_LABEL_LENGTH, limit)
   return text.length > limit ? text.substring(0, limit) + "…" : text
 }
 
@@ -127,10 +157,10 @@ function barText(entry, nowMs, format, maxLabel) {
 function describe(entry, nowMs) {
   var status = statusOf(entry, nowMs)
   return {
-    label: String(entry && entry.label ? entry.label : ""),
-    start: String(entry && entry.start ? entry.start : ""),
-    end: String(entry && entry.end ? entry.end : ""),
-    format: String(entry && entry.format ? entry.format : "days"),
+    label: boundedString(entry && entry.label ? entry.label : "", MAX_LABEL_LENGTH),
+    start: boundedString(entry && entry.start ? entry.start : "", MAX_DATE_LENGTH),
+    end: boundedString(entry && entry.end ? entry.end : "", MAX_DATE_LENGTH),
+    format: normalizedFormat(entry && entry.format ? entry.format : "days"),
     status: status,
     days: status === "active" ? remainingDays(entry, nowMs) : 0,
     elapsed: elapsedPercent(entry, nowMs),
@@ -147,14 +177,15 @@ function normalize(raw) {
   if (!isObject(raw)) return out
 
   if (Array.isArray(raw.countdowns)) {
-    for (var i = 0; i < raw.countdowns.length; i++) {
+    var recordCount = Math.min(raw.countdowns.length, MAX_COUNTDOWNS)
+    for (var i = 0; i < recordCount; i++) {
       var e = raw.countdowns[i]
       if (!isObject(e)) continue
       out.countdowns.push({
-        label: String(e.label || ""),
-        start: String(e.start || ""),
-        end: String(e.end || ""),
-        format: String(e.format || "days")
+        label: boundedString(e.label, MAX_LABEL_LENGTH),
+        start: boundedString(e.start, MAX_DATE_LENGTH),
+        end: boundedString(e.end, MAX_DATE_LENGTH),
+        format: normalizedFormat(e.format)
       })
     }
   }
@@ -178,10 +209,17 @@ function cycleIndex(current, count, delta) {
 // "" if it is okay, otherwise the reason.
 function validate(entry) {
   if (!isObject(entry)) return "Invalid entry"
-  if (String(entry.label || "").trim() === "") return "Label cannot be empty"
+  var label = String(entry.label || "")
+  if (label.trim() === "") return "Label cannot be empty"
+  if (label.length > MAX_LABEL_LENGTH) return "Label is too long"
+  if (/[\u0000-\u001f\u007f]/.test(label)) return "Label must be a single line"
+  if (String(entry.start || "").length > MAX_DATE_LENGTH) return "Invalid start date (YYYY-MM-DD)"
+  if (String(entry.end || "").length > MAX_DATE_LENGTH) return "Invalid end date (YYYY-MM-DD)"
   if (!parseDate(entry.start)) return "Invalid start date (YYYY-MM-DD)"
   if (!parseDate(entry.end)) return "Invalid end date (YYYY-MM-DD)"
   if (parseDate(entry.end).getTime() <= parseDate(entry.start).getTime())
     return "End must come after start"
+  if (["days", "percentage", "auto"].indexOf(String(entry.format || "days")) === -1)
+    return "Invalid format"
   return ""
 }

@@ -83,7 +83,8 @@ Countdown data is stored locally in
 
 `start` is used to calculate progress. The plugin accepts non-zero-padded dates
 for compatibility, but writes dates back in canonical `YYYY-MM-DD` form. The
-file is watched for changes so multiple monitors stay in sync.
+file is watched for changes so multiple monitors stay in sync. State is limited
+to 64 KiB, 64 countdowns, and 128 characters per label.
 
 ## Update and removal
 
@@ -105,10 +106,15 @@ omarchy plugin validate .
 This plugin runs unsandboxed inside `omarchy-shell` when enabled.
 
 - Network access: none.
-- External commands: `mkdir -p`, used only to create the local state directory.
-- Local data: reads and writes `~/.local/state/omarchy/countdown.json`.
+- External commands: `/usr/bin/python3` runs the bundled `state_io.py` helper
+  for bounded state reads and atomic writes.
+- Local data: reads and writes `~/.local/state/omarchy/countdown.json`. The QML
+  watcher never reads file content; the helper rejects symlinks, non-regular
+  files, files owned by another user, unsafe writable modes, hard links, and
+  payloads above 64 KiB before JSON decoding.
 - Elevated privileges and background services: none.
-- Dependencies: Omarchy Quattro and Quickshell; no third-party runtime dependencies.
+- Dependencies: Omarchy Quattro, Quickshell, and the Python 3 runtime provided
+  by Omarchy; no third-party Python packages are used.
 
 ## License
 
