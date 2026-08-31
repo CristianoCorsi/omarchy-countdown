@@ -1,8 +1,14 @@
-# Countdown
+<h1 align="center">Countdown</h1>
 
-Countdowns for the [Omarchy](https://omarchy.org) bar. The widget shows the
+<p align="center">
+  Countdowns for the <a href="https://omarchy.org">Omarchy</a> bar. The widget shows the
 time remaining until a deadline, can draw progress below the label, and opens
 a panel for managing multiple countdowns.
+</p>
+
+<p align="center">
+  <a href="https://plugins.omarchy.org/plugin.html?id=cristianocorsi.countdown"><img alt="On omarchyplugins.com" src="https://img.shields.io/badge/omarchyplugins.com-listed-8b5cf6"></a>
+</p>
 
 <p align="center">
   <img src="preview.png" alt="Countdown bar widget and management panel" width="430">
